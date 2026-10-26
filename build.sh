@@ -1,7 +1,7 @@
 #!/bin/bash
 # Compilation complète — à lancer dans le shell MSYS2 (MINGW64 recommandé), depuis ce dossier :
 #     bash build.sh
-# Résultat dans ./build : PKP_Downloader.exe + net.dll + img.dll + metadata.dll + matth25v6_db.dll
+# Résultat dans ./build : pred.exe + net.dll + img.dll + metadata.dll + matth25v6_db.dll
 set -e
 mkdir -p build
 
