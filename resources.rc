@@ -1,0 +1,12 @@
+// resources.rc - Fichier de ressources allégé
+// Compile avec: rc resources.rc (génère resources.res)
+
+#include <windows.h>
+#include "resource.h"
+
+// Images templates
+IDR_IMG_FR      RCDATA  "Ressources/img_FR.png"
+IDR_IMG_EN      RCDATA  "Ressources/img_EN.png"
+
+// Police
+IDR_FONT_LORA   RCDATA  "Ressources/Lora-Bold.ttf"
