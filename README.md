@@ -1,6 +1,6 @@
 # matth25v6_downloader
 
-Un petit programme Windows en ligne de commande qui télécharge les prédications audio de Philippe Kacou et les cantiques depuis les serveurs de philippekacou.org, et qui range le tout proprement : bon nom de fichier, bons tags MP3, pochette générée avec le numéro et le titre dessus.
+Un petit programme console Windows qui télécharge les prédications audio du Prophète Philippe Kacou et les cantiques depuis les serveurs de philippekacou.org, et qui range le tout proprement : bon nom de fichier, bons tags MP3, pochette générée avec le numéro et le titre dessus.
 
 J'ai écrit ça au départ parce que j'en avais marre de remplir les tags à la main et de me demander si mes fichiers étaient encore à jour. Le programme se souvient de ce qu'il a déjà téléchargé, ne retélécharge que ce qui a changé côté serveur, et peut tourner autant de fois que tu veux sans rien casser.
 
@@ -19,7 +19,7 @@ J'ai écrit ça au départ parce que j'en avais marre de remplir les tags à la 
 
 Tu lances `pred.exe`. Il te pose quatre ou cinq questions (voir plus bas), puis il fait tout seul :
 
-1. **Il vérifie les bases de données officielles.** Le serveur publie cinq petits fichiers SQLite : `common.db` (cantiques, albums, chanteurs...) et une base par langue (`matth25v6_fr.db`, `_en.db`, `_es.db`, `_pt.db`) qui contient la liste des prédications. Pour chacune, le programme demande à l'API la date de dernière mise à jour et la compare à celle qu'il a gardée en mémoire. Si rien n'a bougé, il passe. Sinon il retélécharge la base.
+1. **Il vérifie les bases de données officielles.** Le logiciel suit cinq petits fichiers SQLite : `common.db` (cantiques, albums, chanteurs...) et une base par langue (`matth25v6_fr.db`, `_en.db`, `_es.db`, `_pt.db`) qui contient la liste des prédications. Pour chacune, le programme demande à l'API la date de dernière mise à jour et la compare à celle qu'il a gardée en mémoire. Si rien n'a bougé, il passe. Sinon il retélécharge la base.
 2. **Il lit les cantiques actifs** dans `common.db` et télécharge ceux qui sont absents ou modifiés.
 3. **Il parcourt les langues que tu as choisies**, et pour chaque prédication active :
    - il regarde si le fichier MP3 existe déjà sur le disque ;
