@@ -19,6 +19,7 @@ extern "C" {
 typedef struct {
     char path_predications[MAX_PATH];  // <dossier du logiciel>\\Matthieu25v6\\Music\\Predications
     char path_cantiques[MAX_PATH];     // <dossier du logiciel>\\Matthieu25v6\\Music\\Cantiques
+    int telecharger_cantiques;         // 1 = on télécharge aussi les cantiques
     int separer_par_langue;            // 1 = un sous-dossier par langue (Predications\\fr, ...) ; 0 = tout dans Predications
     char langues[LANGUES_MAX][LANGUE_CODE_MAX];  // codes de l'API des langues choisies ("fr-fr", "ci-aba"...)
     int nb_langues;

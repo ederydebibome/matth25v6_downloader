@@ -276,6 +276,7 @@ int main(int argc, char* argv[]) {
     M25Langue* disponibles = NULL;
     int nb_disponibles = 0;
     int compteurs_maj[LANGUES_MAX] = {0};
+    int base_ok[LANGUES_MAX] = {0};
 
     char dossier_exe[MAX_PATH];
     char dossier_ressources[MAX_PATH];
@@ -358,20 +359,29 @@ int main(int argc, char* argv[]) {
         goto cleanup;
     }
 
+    // les bases des langues choisies d'abord : si le serveur n'en a pas pour une langue,
+    // on le sait tout de suite, avant d'avoir passé du temps sur les MP3
+    printf("\n--- Bases de données des langues ---\n");
+    for (int i = 0; i < config.nb_langues; i++) {
+        base_ok[i] = synchroniser_base(config.langues[i], dossier_ressources, config.langues[i]);
+        if (!base_ok[i]) {
+            fprintf(stderr, "✗ Pas de base pour %s, cette langue sera ignorée\n", config.langues[i]);
+        }
+    }
+
     // les cantiques ne dépendent pas de la langue, ils sont dans common.db
-    telecharger_cantiques_actifs(commonDbPath, &config, Sing_GetAll);
+    if (config.telecharger_cantiques) {
+        telecharger_cantiques_actifs(commonDbPath, &config, Sing_GetAll);
+    }
 
     for (int i = 0; i < config.nb_langues; i++) {
+        if (!base_ok[i]) continue;
+
         const char* code = config.langues[i];
         char cle[LANGUE_CODE_MAX];
         cle_langue(code, cle, sizeof(cle));
 
         printf("\n========== %s ==========\n", code);
-
-        if (!synchroniser_base(code, dossier_ressources, code)) {
-            fprintf(stderr, "✗ Pas de base pour %s, langue ignorée\n", code);
-            continue;
-        }
 
         char nom_base[64];
         nom_fichier_base(code, nom_base, sizeof(nom_base));

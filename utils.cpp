@@ -345,21 +345,25 @@ static int est_oui(const char* s) {
     return s[0] == 'O' || s[0] == 'o';
 }
 
-// Retrouve une langue d'après ce que la personne a tapé : un numéro de la liste, le
-// code complet ("ci-aba") ou le code court quand il existe ("fr" pour "fr-fr").
-// Renvoie l'indice dans la liste, ou -1.
-static int trouver_langue(const M25Langue* liste, int nb, const char* mot) {
+// Les langues se choisissent par leur numéro dans la liste affichée.
+// Renvoie l'indice dans la liste (numéro - 1), ou -1 si ce n'est pas un numéro valide.
+static int numero_langue(const char* mot, int nb) {
     char* fin = NULL;
     long num = strtol(mot, &fin, 10);
-    if (fin != mot && *fin == '\0') {
-        return (num >= 1 && num <= nb) ? (int)(num - 1) : -1;
+    if (fin == mot || *fin != '\0') return -1;
+    return (num >= 1 && num <= nb) ? (int)(num - 1) : -1;
+}
+
+// Comme lire_input mais sans valeur par défaut : une ligne vide reste vide
+static void lire_ligne(const char* prompt, char* buffer, size_t size) {
+    printf("%s : ", prompt);
+    fflush(stdout);
+    if (fgets(buffer, (int)size, stdin) == NULL) {
+        buffer[0] = '\0';
+        return;
     }
-    for (int i = 0; i < nb; i++) {
-        char cle[LANGUE_CODE_MAX];
-        cle_langue(liste[i].initial, cle, sizeof(cle));
-        if (_stricmp(mot, liste[i].initial) == 0 || _stricmp(mot, cle) == 0) return i;
-    }
-    return -1;
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') buffer[len - 1] = '\0';
 }
 
 // Configurer l'application
@@ -377,6 +381,9 @@ int configurer_application(Config* config, const char* dossier_exe,
 
     lire_input("Séparer les prédications par langue (un dossier par langue) ? (O/N)", "N", buffer, sizeof(buffer));
     config->separer_par_langue = est_oui(buffer);
+
+    lire_input("Télécharger aussi les cantiques ? (O/N)", "N", buffer, sizeof(buffer));
+    config->telecharger_cantiques = est_oui(buffer);
 
     // On vire les codes louches, puis on trie par code : les langues d'un même pays se suivent
     int n = 0;
@@ -408,8 +415,8 @@ int configurer_application(Config* config, const char* dossier_exe,
 
     int nb_choisies = 0;
     for (int essai = 0; essai < 5 && nb_choisies == 0; essai++) {
-        printf("\nTape des numéros ou des codes séparés par des virgules (ex: 2, fr, ci-aba), ou 'all' pour tout.\n");
-        lire_input("Langues à télécharger", "en-en,fr-fr", buffer, sizeof(buffer));
+        printf("\nTape les numéros des langues séparés par des virgules (ex: 2, 15, 37), ou 'all' pour tout.\n");
+        lire_ligne("Langues à télécharger", buffer, sizeof(buffer));
 
         int tout = 0;
         for (char* mot = strtok(buffer, ",; \t"); mot; mot = strtok(NULL, ",; \t")) {
@@ -417,9 +424,9 @@ int configurer_application(Config* config, const char* dossier_exe,
                 tout = 1;
                 continue;
             }
-            int idx = trouver_langue(disponibles, n, mot);
+            int idx = numero_langue(mot, n);
             if (idx < 0) {
-                printf("  \"%s\" : inconnu, ignoré\n", mot);
+                printf("  \"%s\" : pas un numéro de la liste, ignoré\n", mot);
             } else if (!choisie[idx]) {
                 choisie[idx] = 1;
                 nb_choisies++;
@@ -451,7 +458,7 @@ int configurer_application(Config* config, const char* dossier_exe,
 
     printf("\n=== Configuration choisie ===\n");
     printf("Prédications : %s\n", config->path_predications);
-    printf("Cantiques    : %s\n", config->path_cantiques);
+    printf("Cantiques    : %s\n", config->telecharger_cantiques ? config->path_cantiques : "non");
     printf("Séparation par langue : %s\n", config->separer_par_langue ? "Oui" : "Non");
     printf("Langues (%d) : ", config->nb_langues);
     for (int i = 0; i < config->nb_langues; i++) {
