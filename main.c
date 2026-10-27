@@ -10,10 +10,8 @@
 #include "state_db.h"
 #include <locale.h>
 
-create_image_t g_createImage = NULL;
 download_file_t g_downloadFile = NULL;
 set_tags_t g_setTags = NULL;
-set_cover_image_t g_setCoverImage = NULL;
 
 static void copy_text(char* dst, size_t size, const char* src) {
     copier_texte_utf8(dst, size, src);
@@ -38,34 +36,25 @@ static void year_from_date(const char* date, char* out, size_t size) {
 }
 
 static const char* sermon_album_for_lang(const char* langue) {
-    if (langue && strcmp(langue, "En") == 0) {
+    if (langue && strcmp(langue, "en-en") == 0) {
         return "The Message of Matthew 25v6 in Audio";
     }
     return "Le Message de Matthieu 25v6 en audio";
 }
 
 static const char* sermon_artist_for_lang(const char* langue) {
-    if (langue && strcmp(langue, "En") == 0) {
+    if (langue && strcmp(langue, "en-en") == 0) {
         return "Matthew 25v6";
     }
     return "Matthieu 25v6";
 }
 
-static void set_audio_tags(const char* audioPath, const TagPair* tags, int count, const char* coverPath) {
-    if (g_setTags) {
-        if (g_setTags(audioPath, tags, count) == 0) {
-            printf("✓ Métadonnées ajoutées\n");
-        } else {
-            fprintf(stderr, "✗ Erreur métadonnées\n");
-        }
-    }
-
-    if (coverPath && coverPath[0] && fichier_existe(coverPath) && g_setCoverImage) {
-        if (g_setCoverImage(audioPath, coverPath) == 0) {
-            printf("✓ Pochette ajoutée\n");
-        } else {
-            fprintf(stderr, "✗ Erreur pochette\n");
-        }
+static void set_audio_tags(const char* audioPath, const TagPair* tags, int count) {
+    if (!g_setTags) return;
+    if (g_setTags(audioPath, tags, count) == 0) {
+        printf("✓ Métadonnées ajoutées\n");
+    } else {
+        fprintf(stderr, "✗ Erreur métadonnées\n");
     }
 }
 
@@ -97,13 +86,13 @@ static int doit_telecharger(const char* scope, int item_id, const char* audioPat
     return 0;
 }
 
-// Retourne 1 si la prédication est valide (à jour ou téléchargée), 0 en cas d'échec.
-// *mis_a_jour vaut 1 si un téléchargement a eu lieu.
-static int process_sermon(const M25Sermon* sermon, const Config* config, const Font* font,
-                          const char* dossier_exe, const char* langue, const char* langue_lower,
-                          int* mis_a_jour) {
+// Traite une prédication : téléchargement si besoin, puis tags.
+// Retourne 1 si le fichier est bon (déjà à jour ou téléchargé), 0 si ça a échoué.
+// *mis_a_jour passe à 1 quand on a vraiment téléchargé quelque chose.
+static int process_sermon(const M25Sermon* sermon, const Config* config,
+                          const char* code, const char* cle, int* mis_a_jour) {
     if (mis_a_jour) *mis_a_jour = 0;
-    if (!sermon || !config || !font || !dossier_exe || !langue || !langue_lower) return 0;
+    if (!sermon || !config || !code || !cle) return 0;
     if (!sermon->audio_name[0] || !sermon->cloud_audio[0]) return 0;
 
     char numero[32];
@@ -112,86 +101,52 @@ static int process_sermon(const M25Sermon* sermon, const Config* config, const F
     char annee[8];
     year_from_date(sermon->publication_date, annee, sizeof(annee));
 
-    printf("\n=== Kacou %s - %s ===\n", numero, langue);
+    printf("\n=== Kacou %s - %s ===\n", numero, code);
 
     char dossierAudio[MAX_PATH];
     if (config->separer_par_langue) {
-        snprintf(dossierAudio, sizeof(dossierAudio), "%s\\%s", config->path_predications, langue);
+        snprintf(dossierAudio, sizeof(dossierAudio), "%s\\%s", config->path_predications, cle);
     } else {
         snprintf(dossierAudio, sizeof(dossierAudio), "%s", config->path_predications);
     }
     creer_dossier_recursif(dossierAudio);
 
-    char nomAudio[256];
-    copy_text(nomAudio, sizeof(nomAudio), sermon->audio_name);
+    char nomAudio[260];
+    snprintf(nomAudio, sizeof(nomAudio), "%s", sermon->audio_name);
     sanitize_filename(nomAudio);
 
     char audioPath[MAX_PATH];
     snprintf(audioPath, sizeof(audioPath), "%s\\%s", dossierAudio, nomAudio);
 
     char raison[160];
-    if (!doit_telecharger(langue_lower, sermon->number, audioPath, sermon->updated_at,
-                          raison, sizeof(raison))) {
+    if (!doit_telecharger(cle, sermon->number, audioPath, sermon->updated_at, raison, sizeof(raison))) {
         printf("Audio : à jour, réutilisation\n");
         return 1;
     }
-
     printf("Audio : %s, téléchargement...\n", raison);
+
     if (!g_downloadFile || !g_downloadFile(sermon->cloud_audio, audioPath)) {
-        // L'ancienne version éventuelle reste intacte (remplacement atomique dans net.dll)
-        // et la version n'est PAS mémorisée : on réessaiera à la prochaine exécution.
         fprintf(stderr, "✗ Échec téléchargement audio\n");
         return 0;
     }
     printf("✓ Audio téléchargé\n");
 
-    // Image de couverture : toujours régénérée avec le nouveau fichier (le titre a pu changer)
-    // Images : dossier local "img" à côté de l'exécutable (le nom du fichier contient déjà la langue)
-    const char* dossierImages = config->path_images;
-    creer_dossier_recursif(dossierImages);
-
-    char templatePath[MAX_PATH];
-    snprintf(templatePath, sizeof(templatePath), "%s\\Ressources\\img_%s.png",
-             dossier_exe, (strcmp(langue, "Fr") == 0 || strcmp(langue, "Es") == 0) ? "FR" : "EN");
-
-    char imagePath[MAX_PATH];
-    snprintf(imagePath, sizeof(imagePath), "%s\\Kacou_%s_%s.png", dossierImages, numero, langue);
-
-    int image_creee_maintenant = 0;
-    if (g_createImage) {
-        if (fichier_existe(imagePath)) supprimer_fichier(imagePath);
-        printf("Image : Création en cours...\n");
-        g_createImage("Kacou", numero, sermon->title, font->path, 35.0, config->couleur_cover,
-                      templatePath, imagePath, 20.0, 460.0);
-        Sleep(100);
-        if (fichier_existe(imagePath)) {
-            printf("✓ Image créée\n");
-            image_creee_maintenant = 1;
-        } else {
-            fprintf(stderr, "✗ Échec création image\n");
-        }
-    }
-
     TagPair tags[] = {
         {"TITLE", sermon->title},
-        {"ARTIST", sermon_artist_for_lang(langue)},
-        {"ALBUM", sermon_album_for_lang(langue)},
+        {"ARTIST", sermon_artist_for_lang(code)},
+        {"ALBUM", sermon_album_for_lang(code)},
         {"GENRE", "Sermon"},
         {"TRACKNUMBER", numero},
         {"DATE", annee},
-        {"LANGUAGE", langue}
+        {"LANGUAGE", code}
     };
-    set_audio_tags(audioPath, tags, (int)(sizeof(tags) / sizeof(tags[0])), fichier_existe(imagePath) ? imagePath : NULL);
+    set_audio_tags(audioPath, tags, (int)(sizeof(tags) / sizeof(tags[0])));
 
-    if (!config->conserver_images && image_creee_maintenant && fichier_existe(imagePath)) {
-        supprimer_fichier(imagePath);
-        printf("✓ Image supprimée\n");
-    }
-
-    // Mémorisation de la version SEULEMENT après un téléchargement réussi
-    if (!StateDB_SetAudioUpdatedAt(langue_lower, sermon->number, sermon->updated_at)) {
+    // la version n'est notée qu'ici, une fois que tout s'est bien passé
+    if (!StateDB_SetAudioUpdatedAt(cle, sermon->number, sermon->updated_at)) {
         fprintf(stderr, "⚠ Impossible d'enregistrer la version dans pred_state.db\n");
     }
+
     if (mis_a_jour) *mis_a_jour = 1;
     return 1;
 }
@@ -284,7 +239,7 @@ static void telecharger_cantiques_actifs(const char* commonDbPath, const Config*
             {"GENRE", "Cantique"},
             {"TRACKNUMBER", track}
         };
-        set_audio_tags(audioPath, tags, (int)(sizeof(tags) / sizeof(tags[0])), NULL);
+        set_audio_tags(audioPath, tags, (int)(sizeof(tags) / sizeof(tags[0])));
 
         if (!StateDB_SetAudioUpdatedAt("cantiques", sing->id, sing->updated_at)) {
             fprintf(stderr, "⚠ Impossible d'enregistrer la version dans pred_state.db\n");
@@ -307,20 +262,31 @@ int main(int argc, char* argv[]) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
     setlocale(LC_ALL, NULL);
-    
-
-    printf("=== PKP Downloader - Version Portable ===\n");
-
-    char dossier_exe[MAX_PATH];
-    obtenir_dossier_executable(dossier_exe, sizeof(dossier_exe));
-    printf("Dossier : %s\n", dossier_exe);
 
     lib net = {"net.dll", NULL};
-    lib img = {"img.dll", NULL};
     lib meta = {"metadata.dll", NULL};
     lib m25 = {"matth25v6_db.dll", NULL};
 
-    printf("\nChargement de net.dll...\n");
+    sermon_get_count_t Sermon_GetCount = NULL;
+    sermon_get_all_t Sermon_GetAll = NULL;
+    sing_get_all_t Sing_GetAll = NULL;
+    langue_get_active_t Langue_GetActive = NULL;
+
+    Config config = {0};
+    M25Langue* disponibles = NULL;
+    int nb_disponibles = 0;
+    int compteurs_maj[LANGUES_MAX] = {0};
+
+    char dossier_exe[MAX_PATH];
+    char dossier_ressources[MAX_PATH];
+    char commonDbPath[MAX_PATH];
+    char state_db_path[MAX_PATH];
+
+    printf("=== PKP Downloader ===\n");
+    obtenir_dossier_executable(dossier_exe, sizeof(dossier_exe));
+    printf("Dossier : %s\n", dossier_exe);
+
+    // net.dll d'abord : sans elle on ne peut même pas récupérer les bases
     net.value = LoadLibraryA(net.name);
     if (!net.value) {
         fprintf(stderr, "✗ Erreur net.dll (requis pour téléchargement)\n");
@@ -330,140 +296,133 @@ int main(int argc, char* argv[]) {
     }
     g_downloadFile = (download_file_t)GetProcAddress(net.value, "DownloadFile");
     if (!g_downloadFile) {
-        fprintf(stderr, "✗ Fonction DownloadFile introuvable dans net.dll\n");
+        fprintf(stderr, "✗ DownloadFile introuvable dans net.dll\n");
         goto cleanup;
     }
-    printf("✓ net.dll chargée\n");
 
-    char dossier_ressources[MAX_PATH];
     snprintf(dossier_ressources, sizeof(dossier_ressources), "%s\\Ressources", dossier_exe);
     creer_dossier_recursif(dossier_ressources);
 
-    char state_db_path[MAX_PATH];
     snprintf(state_db_path, sizeof(state_db_path), "%s\\pred_state.db", dossier_exe);
     if (!StateDB_Open(state_db_path)) {
-        fprintf(stderr, "✗ Impossible d'ouvrir la base d'état locale\n");
+        fprintf(stderr, "✗ Impossible d'ouvrir pred_state.db\n");
         goto cleanup;
     }
 
-    if (!initialiser_ressources(dossier_exe)) {
-        fprintf(stderr, "\n✗ Erreur lors de l'initialisation des ressources\n");
+    // common.db en premier et tout seul : c'est lui qui contient la liste des langues,
+    // on ne peut pas proposer de choix avant de l'avoir. Les bases des langues, elles,
+    // ne sont téléchargées que pour celles qu'on choisit.
+    printf("\n--- Vérification de common.db ---\n");
+    snprintf(commonDbPath, sizeof(commonDbPath), "%s\\common.db", dossier_ressources);
+    synchroniser_base("common", dossier_ressources, "common");
+    if (!fichier_existe(commonDbPath)) {
+        fprintf(stderr, "✗ common.db est absente et impossible à télécharger, on s'arrête là\n");
         goto cleanup;
     }
 
-    synchroniser_bases_donnees(dossier_ressources);
-
-    Font font;
-    initialiser_police(&font, dossier_exe);
-
-    Config config = {0};
-    configurer_application(&config, dossier_exe);
-
-    printf("\nChargement des DLL restantes...\n");
-    img.value = LoadLibraryA(img.name);
     meta.value = LoadLibraryA(meta.name);
     m25.value = LoadLibraryA(m25.name);
-
-    if (!img.value) { fprintf(stderr, "✗ Erreur img.dll\n"); goto cleanup; }
-    if (!meta.value) { fprintf(stderr, "✗ Erreur metadata.dll\n"); goto cleanup; }
-    if (!m25.value) { fprintf(stderr, "✗ Erreur matth25v6_db.dll\n"); goto cleanup; }
-
-    g_createImage = (create_image_t)GetProcAddress(img.value, "CreateImage");
-    g_setTags = (set_tags_t)GetProcAddress(meta.value, "SetTags");
-    g_setCoverImage = (set_cover_image_t)GetProcAddress(meta.value, "SetCoverImage");
-    sermon_get_count_t Sermon_GetCount = (sermon_get_count_t)GetProcAddress(m25.value, "Sermon_GetCount");
-    sermon_get_all_t Sermon_GetAll = (sermon_get_all_t)GetProcAddress(m25.value, "Sermon_GetAll");
-    sing_get_all_t Sing_GetAll = (sing_get_all_t)GetProcAddress(m25.value, "Sing_GetAll");
-
-    if (!g_createImage || !g_setTags || !g_setCoverImage || !Sermon_GetCount || !Sermon_GetAll || !Sing_GetAll) {
-        fprintf(stderr, "✗ Fonctions manquantes dans les DLL\n");
+    if (!meta.value) {
+        fprintf(stderr, "✗ Erreur metadata.dll\n");
         goto cleanup;
     }
-    printf("✓ Toutes les DLL chargées\n");
-
-    char commonDbPath[MAX_PATH];
-    snprintf(commonDbPath, sizeof(commonDbPath), "%s\\common.db", dossier_ressources);
-    telecharger_cantiques_actifs(commonDbPath, &config, Sing_GetAll);
-
-    for (int i = 0; i < config.nb_langues - 1; i++) {
-        for (int j = i + 1; j < config.nb_langues; j++) {
-            if (strcmp(config.langues[i], config.langues[j]) > 0) {
-                char temp[3];
-                strcpy(temp, config.langues[i]);
-                strcpy(config.langues[i], config.langues[j]);
-                strcpy(config.langues[j], temp);
-            }
-        }
+    if (!m25.value) {
+        fprintf(stderr, "✗ Erreur matth25v6_db.dll\n");
+        goto cleanup;
     }
 
-    int compteurs_maj[4] = {0};
+    g_setTags = (set_tags_t)GetProcAddress(meta.value, "SetTags");
+    Sermon_GetCount = (sermon_get_count_t)GetProcAddress(m25.value, "Sermon_GetCount");
+    Sermon_GetAll = (sermon_get_all_t)GetProcAddress(m25.value, "Sermon_GetAll");
+    Sing_GetAll = (sing_get_all_t)GetProcAddress(m25.value, "Sing_GetAll");
+    Langue_GetActive = (langue_get_active_t)GetProcAddress(m25.value, "Langue_GetActive");
+    if (!g_setTags || !Sermon_GetCount || !Sermon_GetAll || !Sing_GetAll || !Langue_GetActive) {
+        fprintf(stderr, "✗ Il manque des fonctions dans les DLL\n");
+        goto cleanup;
+    }
+
+    disponibles = (M25Langue*)calloc(LANGUES_MAX, sizeof(M25Langue));
+    if (!disponibles) {
+        fprintf(stderr, "✗ Mémoire insuffisante\n");
+        goto cleanup;
+    }
+    if (Langue_GetActive(commonDbPath, disponibles, LANGUES_MAX, &nb_disponibles) != M25_OK || nb_disponibles <= 0) {
+        fprintf(stderr, "✗ Impossible de lire la liste des langues dans common.db\n");
+        goto cleanup;
+    }
+    if (nb_disponibles >= LANGUES_MAX) {
+        fprintf(stderr, "⚠ Liste des langues tronquée à %d\n", LANGUES_MAX);
+    }
+
+    if (!configurer_application(&config, dossier_exe, disponibles, nb_disponibles)) {
+        goto cleanup;
+    }
+
+    // les cantiques ne dépendent pas de la langue, ils sont dans common.db
+    telecharger_cantiques_actifs(commonDbPath, &config, Sing_GetAll);
 
     for (int i = 0; i < config.nb_langues; i++) {
-        const char* langue = config.langues[i];
-        char langue_lower[3];
-        langue_lower[0] = (char)tolower((unsigned char)langue[0]);
-        langue_lower[1] = (char)tolower((unsigned char)langue[1]);
-        langue_lower[2] = '\0';
+        const char* code = config.langues[i];
+        char cle[LANGUE_CODE_MAX];
+        cle_langue(code, cle, sizeof(cle));
 
-        char dbPath[MAX_PATH];
-        snprintf(dbPath, sizeof(dbPath), "%s\\matth25v6_%s.db", dossier_ressources, langue_lower);
+        printf("\n========== %s ==========\n", code);
 
-        if (!fichier_existe(dbPath)) {
-            fprintf(stderr, "⚠ Base introuvable : %s\n", dbPath);
-            fprintf(stderr, "   La langue %s est passée.\n", langue);
+        if (!synchroniser_base(code, dossier_ressources, code)) {
+            fprintf(stderr, "✗ Pas de base pour %s, langue ignorée\n", code);
             continue;
         }
 
-        printf("\n========== %s ==========" "\n", langue);
+        char nom_base[64];
+        nom_fichier_base(code, nom_base, sizeof(nom_base));
+        char dbPath[MAX_PATH];
+        snprintf(dbPath, sizeof(dbPath), "%s\\%s", dossier_ressources, nom_base);
 
         int sermonCount = 0;
         if (Sermon_GetCount(dbPath, &sermonCount) != M25_OK || sermonCount <= 0) {
-            fprintf(stderr, "✗ Aucun sermon actif lu pour %s\n", langue);
+            fprintf(stderr, "✗ Aucune prédication active lue pour %s\n", code);
             continue;
         }
+        printf("%d prédications actives\n", sermonCount);
 
         M25Sermon* sermons = (M25Sermon*)calloc((size_t)sermonCount, sizeof(M25Sermon));
         if (!sermons) {
-            fprintf(stderr, "✗ Mémoire insuffisante pour %s\n", langue);
+            fprintf(stderr, "✗ Mémoire insuffisante\n");
             continue;
         }
 
         int loaded = 0;
-        if (Sermon_GetAll(dbPath, sermons, sermonCount, &loaded) != M25_OK) {
-            fprintf(stderr, "✗ Erreur lecture sermons pour %s\n", langue);
+        if (Sermon_GetAll(dbPath, sermons, sermonCount, &loaded) != M25_OK || loaded <= 0) {
+            fprintf(stderr, "✗ Impossible de lire les prédications de %s\n", code);
             free(sermons);
             continue;
         }
 
         for (int s = 0; s < loaded; ++s) {
             int mis_a_jour = 0;
-            process_sermon(&sermons[s], &config, &font, dossier_exe, langue, langue_lower, &mis_a_jour);
+            process_sermon(&sermons[s], &config, code, cle, &mis_a_jour);
             if (mis_a_jour) compteurs_maj[i]++;
         }
 
         free(sermons);
-        printf("\n✓ Terminé pour %s\n", langue);
+        printf("\n✓ Terminé pour %s\n", code);
     }
 
-    printf("\n========== Résumé des mises à jour ==========\n");
+    printf("\n=== Résumé ===\n");
     for (int i = 0; i < config.nb_langues; i++) {
-        if (compteurs_maj[i] > 0) {
-            printf("  %s : %d prédication(s) téléchargée(s) ou mise(s) à jour\n", config.langues[i], compteurs_maj[i]);
-        } else {
-            printf("  %s : aucune mise à jour\n", config.langues[i]);
-        }
+        printf("%s : %d prédication(s) téléchargée(s) ou mise(s) à jour\n",
+               config.langues[i], compteurs_maj[i]);
     }
 
 cleanup:
+    free(disponibles);
     StateDB_Close();
     if (m25.value) FreeLibrary(m25.value);
     if (meta.value) FreeLibrary(meta.value);
-    if (img.value) FreeLibrary(img.value);
     if (net.value) FreeLibrary(net.value);
 
-    printf("\n=== Téléchargement terminé ===\n");
+    printf("\n=== Terminé ===\n");
     printf("Appuyez sur Entrée pour quitter...");
     getchar();
     return 0;
 }
-
